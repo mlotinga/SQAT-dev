@@ -146,7 +146,7 @@ function OUT = Tonality_ECMA418_2(insig, fs, fieldtype, time_skip, show)
 % Institution: University of Salford / ANV Measurement Systems
 %
 % Date created: 07/08/2023
-% Date last modified: 09/01/2025
+% Date last modified: 02/04/2025
 % MATLAB version: 2023b
 %
 % Copyright statement: This file and code is part of work undertaken within
@@ -196,9 +196,9 @@ elseif  size(insig, 2) > 2  % insig is [1xN] or [2xN]
     fprintf('\nWarning: Input signal is not [Nx1] or [Nx2] and was transposed.\n');
 end
 
-% Check the length of the input data (must be longer than 304 ms)
-if size(insig, 1) <=  t_threshold*fs
-    error('Error: Input signal is too short along the specified axis to calculate tonality (must be longer than 304 ms)')
+% Check the length of the input data (must be at least 304 ms)
+if size(insig, 1) <  t_threshold*fs
+    error('Error: Input signal is too short along the specified axis to calculate tonality (must be at least 304 ms)')
 end
 
 % Check the channel number of the input data
@@ -272,7 +272,7 @@ cal_Tx = 1/0.9999043734252;  % Adjustment to calibration factor (Footnote 22 ECM
 % Input pre-processing
 % --------------------
 if fs ~= sampleRate48k  % Resample signal
-    [p_re, ~] = ShmResample(insig, fs);
+    [p_re, ~] = shmResample(insig, fs);
 else  % don't resample
     p_re = insig;
 end
@@ -281,13 +281,13 @@ end
 timeInsig = (0 : length(p_re(:,1))-1) ./ fs;
 
 % Section 5.1.2 ECMA-418-2:2024 Fade in weighting and zero-padding
-pn = ShmPreProc(p_re, max(blockSize), max(hopSize));
+pn = shmPreProc(p_re, max(blockSize), max(hopSize));
 
 % Apply outer & middle ear filter
 % -------------------------------
 %
 % Section 5.1.3.2 ECMA-418-2:2024 Outer and middle/inner ear signal filtering
-pn_om = ShmOutMidEarFilter(pn, fieldtype);
+pn_om = shmOutMidEarFilter(pn, fieldtype);
 
 % Loop through channels in file
 % -----------------------------
@@ -298,7 +298,7 @@ for chan = size(pn_om, 2):-1:1
     
     % Filter equalised signal using 53 1/2Bark ERB filters according to 
     % Section 5.1.4.2 ECMA-418-2:2024
-    pn_omz = ShmAuditoryFiltBank(pn_om(:, chan), false);
+    pn_omz = shmAuditoryFiltBank(pn_om(:, chan), false);
 
     % Autocorrelation function analysis
     % ---------------------------------
@@ -319,21 +319,21 @@ for chan = size(pn_om, 2):-1:1
     % (duplicated) indices corresponding with the NB bands around each z band
     i_NBandsAvgDupe = [1, 1, 1, 6:18, 23:31, 34:61;
                        2, 3, 5, 10:22, 25:33, 34:61];
-    
+
     for zBand = 61:-1:1
 
         % Segmentation into blocks
         % ------------------------
         % Section 5.1.5 ECMA-418-2:2024
         i_start = blockSizeDupe(1) - blockSizeDupe(zBand) + 1;
-        [pn_lz, ~] = ShmSignalSegment(pn_omzDupe(:, zBand), 1,...
+        [pn_lz, ~] = shmSignalSegment(pn_omzDupe(:, zBand), 1,...
                                       blockSizeDupe(zBand), overlap, i_start);
  
         % Transformation into Loudness
         % ----------------------------
         % Sections 5.1.6 to 5.1.9 ECMA-418-2:2024 [N'_basis(z)]
         [pn_rlz, bandBasisLoudness, ~]...
-            = ShmBasisLoudness(pn_lz, bandCentreFreqsDupe(zBand));
+            = shmBasisLoudness(pn_lz, bandCentreFreqsDupe(zBand));
         basisLoudnessArray{zBand} = bandBasisLoudness;
 
         % Apply ACF
@@ -361,15 +361,15 @@ for chan = size(pn_om, 2):-1:1
     for zBand = 53:-1:1  % Loop through 53 critical band filtered signals
         
         NBZ = NBandsAvg(1, zBand) + NBandsAvg(2, zBand) + 1; % Total number of bands to average over
-        
+
         % Averaging of frequency bands
         meanScaledACF = mean(reshape(cell2mat(unbiasedNormACFDupe(i_NBandsAvgDupe(1, zBand):i_NBandsAvgDupe(2, zBand))),...
                                      blockSize(zBand), [], NBZ), 3);
 
         % Average the ACF over adjacent time blocks [phibar_z'(m)]
         if zBand <= 16 
-            meanScaledACF = movmean(meanScaledACF, 3, 2, 'omitnan',...
-                                    'EndPoints', 'fill');
+            meanScaledACF(:, 2:end - 1) = movmean(meanScaledACF, 3, 2, 'omitnan',...
+                                                  'EndPoints', 'discard');
         end
         
         % Application of ACF lag window Section 6.2.4 ECMA-418-2:2024
@@ -402,7 +402,7 @@ for chan = size(pn_om, 2):-1:1
         % [k_max(z)]
         [~, kz_max] = max(magFFTlagWindowACF, [], 1);
         % frequency of maximum tonal component in critical band [f_ton(z)]
-        bandTonalFreqs = kz_max*(sampleRate48k/(2*max(blockSize)));
+        bandTonalFreqs = (kz_max - 1)*(sampleRate48k/(2*max(blockSize)));
 
         % Section 6.2.7 Equation 41 ECMA-418-2:2024 [N'_signal(l,z)]
         % specific loudness of complete band-pass signal in critical band
@@ -415,7 +415,7 @@ for chan = size(pn_om, 2):-1:1
             % calculation for tonal and noise components
             l_n = size(meanScaledACF, 2);
             x = linspace(1, l_n, l_n);
-            xq = linspace(1, l_n, i_interp(zBand)*l_n);
+            xq = linspace(1, l_n, i_interp(zBand)*(l_n - 1) + 1);
             bandTonalLoudness = interp1(x, bandTonalLoudness, xq);
             bandLoudness = interp1(x, bandLoudness, xq);
             bandTonalFreqs = interp1(x, bandTonalFreqs, xq);
@@ -438,11 +438,11 @@ for chan = size(pn_om, 2):-1:1
 
         % Equation 43 ECMA-418-2:2024 low pass filtered specific loudness
         % of non-tonal component in critical band [Ntilde'_tonal(l,z)]
-        bandTonalLoudness = ShmNoiseRedLowPass(bandTonalLoudness, sampleRate1875);
+        bandTonalLoudness = shmNoiseRedLowPass(bandTonalLoudness, sampleRate1875);
 
         % Equation 44 ECMA-418-2:2024 lowpass filtered SNR (improved estimation)
         % [SNRtilde(l,z)]
-        SNRlz = ShmNoiseRedLowPass(SNRlz1, sampleRate1875);
+        SNRlz = shmNoiseRedLowPass(SNRlz1, sampleRate1875);
 
         % Equation 46 ECMA-418-2:2024 [g(z)]
         gz = csz_b(zBand)/(bandCentreFreqs(zBand)^dsz_b(zBand));
@@ -456,7 +456,7 @@ for chan = size(pn_om, 2):-1:1
         bandTonalLoudness = nrlz.*bandTonalLoudness;
 
         % Section 6.2.8 Equation 48 ECMA-418-2:2024 [N'_noise(l,z)]
-        bandNoiseLoudness = ShmNoiseRedLowPass(bandLoudness, sampleRate1875) - bandTonalLoudness;  % specific loudness of non-tonal component in critical band
+        bandNoiseLoudness = shmNoiseRedLowPass(bandLoudness, sampleRate1875) - bandTonalLoudness;  % specific loudness of non-tonal component in critical band
     
         % Store critical band results
         % ---------------------------
@@ -539,11 +539,10 @@ for chan = size(pn_om, 2):-1:1
         % colormap
         cmap_plasma = load('cmap_plasma.txt');
 
-        %%% sound level meter parameters
-        weightFreq = 'A'; % A-frequency weighting
-        weightTime = 'f'; % Time weighting
-        transientTime = 0.6; % fast weighting has a transient response of ~0.6 s. It needs to be removed from the beginning of the SPL curve
-        dBFS = 94;
+        % generate A-weighting filter for LAeq calculation
+        [b, a] = Gen_weighting_filters(fs, 'A');
+        insig_A = filter(b, a, insig);  % filter signal
+        LAeq_all = 20*log10(rms(insig_A(idx_insig:end, :))./2e-5);  % calculate LAeq
 
         % Plot results
         fig = figure('name', sprintf( 'Tonality analysis - ECMA-418-2 (%s signal)', chans(chan) ) );
@@ -563,16 +562,15 @@ for chan = size(pn_om, 2):-1:1
         ax1.YScale = 'log';
         ax1.YLabel.String = "Frequency (Hz)";
         ax1.XLabel.String = "Time (s)";
-        ax1.FontName =  'Arial';
-        ax1.FontSize = 10;
+        ax1.FontName =  'Times';
+        ax1.FontSize = 11;
         colormap(cmap_plasma);
         h = colorbar;
         set(get(h,'label'),'string', {'Specific Tonality,'; '(tu_{HMS}/Bark_{HMS})'});
 
-        [LA, ~] = Do_SLM(p_re(idx_insig:end, chan), fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-        LAeq = Get_Leq(LA( (transientTime*fs):end ), fs); % computed without the transient response of the fast weight
+        LAeq = LAeq_all(chan);
 
-        titleString = sprintf('%s signal, $L_{\\textrm{A,eq}} =$ %.3g (dB SPL)', chans(chan), LAeq);
+        titleString = sprintf('%s signal, $L_{\\textrm{Aeq}} =$ %.3g (dB SPL)', chans(chan), LAeq);
 
         title(titleString, 'Interpreter','Latex' );
         
@@ -594,8 +592,8 @@ for chan = size(pn_om, 2):-1:1
         ax2.GridAlpha = 0.075;
         ax2.GridLineStyle = '--';
         ax2.GridLineWidth = 0.25;
-        ax2.FontName = 'Arial';
-        ax2.FontSize = 10;
+        ax2.FontName = 'Times';
+        ax2.FontSize = 11;
         legend('Location', 'eastoutside', 'FontSize', 8);
         set(gcf,'color','w');
     end

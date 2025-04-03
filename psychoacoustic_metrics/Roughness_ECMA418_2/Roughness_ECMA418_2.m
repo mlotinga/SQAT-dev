@@ -145,7 +145,7 @@ function OUT = Roughness_ECMA418_2(insig, fs, fieldtype, time_skip, show)
 % Institution: University of Salford
 %
 % Date created: 12/10/2023
-% Date last modified: 03/02/2025
+% Date last modified: 02/04/2025
 % MATLAB version: 2023b
 %
 % Copyright statement: This file and code is part of work undertaken within
@@ -190,9 +190,9 @@ elseif  size(insig, 2) > 2  % insig is [1xN] or [2xN]
     fprintf('\nWarning: Input signal is not [Nx1] or [Nx2] and was transposed.\n');
 end
 
-% Check the length of the input data (must be longer than 320 ms)
-if size(insig, 1) <=  t_threshold*fs
-    error("Error: Input signal is too short along the specified axis to calculate roughness (must be longer than 320 ms)")
+% Check the length of the input data (must be at least 320 ms)
+if size(insig, 1) <  t_threshold*fs
+    error("Error: Input signal is too short along the specified axis to calculate roughness (must be at least 320 ms)")
 end
 
 % Check the channel number of the input data
@@ -285,7 +285,7 @@ cal_Rx = 1/1.0011565;  % calibration adjustment factor
 % Input pre-processing
 % --------------------
 if fs ~= sampleRate48k  % Resample signal
-    [p_re, ~] = ShmResample(insig, fs);
+    [p_re, ~] = shmResample(insig, fs);
 else  % don't resample
     p_re = insig;
 end
@@ -298,13 +298,13 @@ n_samples = size(p_re, 1);
 
 % Section 5.1.2 ECMA-418-2:2024 Fade in weighting and zero-padding
 % (only the start is zero-padded)
-pn = ShmPreProc(p_re, max(blockSize), max(hopSize), true, false);
+pn = shmPreProc(p_re, max(blockSize), max(hopSize), true, false);
 
 % Apply outer & middle ear filter
 % -------------------------------
 %
 % Section 5.1.3.2 ECMA-418-2:2024 Outer and middle/inner ear signal filtering
-pn_om = ShmOutMidEarFilter(pn, fieldtype);
+pn_om = shmOutMidEarFilter(pn, fieldtype);
 
 % Loop through channels in file
 % -----------------------------
@@ -315,7 +315,7 @@ for chan = size(pn_om, 2):-1:1
     
     % Filter equalised signal using 53 1/2Bark ERB filters according to 
     % Section 5.1.4.2 ECMA-418-2:2024
-    pn_omz = ShmAuditoryFiltBank(pn_om(:, chan), false);
+    pn_omz = shmAuditoryFiltBank(pn_om(:, chan), false);
 
     % Note: At this stage, typical computer RAM limits impose a need to loop
     % through the critical bands rather than continue with a parallelised
@@ -326,13 +326,13 @@ for chan = size(pn_om, 2):-1:1
 
         % Section 5.1.5 ECMA-418-2:2024
         i_start = 1;
-        [pn_lz, iBlocks] = ShmSignalSegment(pn_omz(:, zBand), 1, blockSize, overlap,...
+        [pn_lz, iBlocksOut] = shmSignalSegment(pn_omz(:, zBand), 1, blockSize, overlap,...
                                             i_start, true);
 
         % Transformation into Loudness
         % ----------------------------
         % Sections 5.1.6 to 5.1.9 ECMA-418-2:2024
-        [~, bandBasisLoudness, ~] = ShmBasisLoudness(pn_lz, bandCentreFreqs(zBand));
+        [~, bandBasisLoudness, ~] = shmBasisLoudness(pn_lz, bandCentreFreqs(zBand));
         basisLoudness(:, :, zBand) = bandBasisLoudness;
     
         % Envelope power spectral analysis
@@ -498,7 +498,7 @@ for chan = size(pn_om, 2):-1:1
 
     % Section 7.1.5.2 ECMA-418-2:2024 - Weighting for high modulation rates
     % Equation 85 [G_l,z,i(f_p,i(l,z))]
-    roughHiWeight = ShmRoughWeight(modRate,...
+    roughHiWeight = shmRoughWeight(modRate,...
                                    reshape(modfreqMaxWeight, [1, 1, nBands]),...
                                    roughHiWeightParams);
 
@@ -598,7 +598,7 @@ for chan = size(pn_om, 2):-1:1
     end  % end of for loop over bands
 
     % Equation 95 [A(l,z)]
-    roughLoWeight = ShmRoughWeight(modFundRate, modfreqMaxWeight, roughLoWeightParams);
+    roughLoWeight = shmRoughWeight(modFundRate, modfreqMaxWeight, roughLoWeightParams);
     modMaxWeightSum = squeeze(sum(modMaxWeight, 1));
     modMaxLoWeight = squeeze(sum(permute(repmat(roughLoWeight, 1, 1, 10), [3, 1, 2]).*modMaxWeight, 1));
     mask = modFundRate <= resDFT1500;
@@ -615,7 +615,7 @@ for chan = size(pn_om, 2):-1:1
     % interpolation to 50 Hz sampling rate
     % Section 7.1.7 Equation 103 [l_50,end]
     l_50Last = floor(n_samples/sampleRate48k*sampleRate50) + 1;
-    x = (iBlocks - 1)/sampleRate48k;
+    x = (iBlocksOut - 1)/sampleRate48k;
     xq = linspace(0, signalT, l_50Last);
     for zBand = nBands:-1:1
         specRoughEst(:, zBand) = pchip(x, modAmpMax(:, zBand), xq);
@@ -642,7 +642,7 @@ for chan = size(pn_om, 2):-1:1
     % Section 7.1.7 Equation 109-110 [R'(l_50,z)]
     riseTime = 0.0625;
     fallTime = 0.5;
-    specRoughness(:, :, chan) = ShmRoughLowPass(specRoughEstTform, sampleRate50, ...
+    specRoughness(:, :, chan) = shmRoughLowPass(specRoughEstTform, sampleRate50, ...
                                                 riseTime, fallTime);
 
 end  % end of for loop over channels
@@ -768,11 +768,10 @@ if show
     % colormap
     cmap_inferno = load('cmap_inferno.txt');
 
-    %%% sound level meter parameters
-    weightFreq = 'A'; % A-frequency weighting
-    weightTime = 'f'; % Time weighting
-    transientTime = 0.6; % fast weighting has a transient response of ~0.6 s. It needs to be removed from the beginning of the SPL curve
-    dBFS = 94;
+    % generate A-weighting filter for LAeq calculation
+    [b, a] = Gen_weighting_filters(fs, 'A');
+    insig_A = filter(b, a, insig);  % filter signal
+    LAeq_all = 20*log10(rms(insig_A(idx_insig:end, :))./2e-5);  % calculate LAeq
 
     for chan = outchans:-1:1
         % Plot results
@@ -792,21 +791,16 @@ if show
         ax1.YScale = 'log';
         ax1.YLabel.String = 'Frequency (Hz)';
         ax1.XLabel.String = 'Time (s)';
-        ax1.FontName =  'Arial';
-        ax1.FontSize = 10;
+        ax1.FontName =  'Times';
+        ax1.FontSize = 11;
         colormap(cmap_inferno);
         h = colorbar;
         set(get(h,'label'),'string', {'Specific roughness,'; '(asper_{HMS}/Bark_{HMS})'});        
 
         if chan == 3 % the binaural channel
 
-            for i=1:outchans-1
-                [LA(:,i), ~] = Do_SLM( insig(idx_insig:end, i) , fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-                LAeq2(i) = Get_Leq(LA( (transientTime*fs):end ,i), fs); % computed without the transient response of the fast weight
-            end
-
              % take the higher channel level as representative (PD ISO/TS 12913-3:2019 Annex D)
-            [LAeq, LR] = max(LAeq2);
+            [LAeq, LR] = max(LAeq_all);
 
             % if branch to identify which channel is higher
             if LR == 1
@@ -816,13 +810,13 @@ if show
             end  % end of if branch
 
         elseif chan == 2 % Stereo right
-            [LA, ~] = Do_SLM(insig(idx_insig:end, chan), fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-            LAeq = Get_Leq(LA( (transientTime*fs):end ), fs); % computed without the transient response of the fast weight
+            
+            LAeq = LAeq_all(chan);
             whichEar = 'right ear';
 
         elseif chan == 1 % Stereo left or mono
-            [LA, ~] = Do_SLM(insig(idx_insig:end, chan), fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-            LAeq = Get_Leq(LA( (transientTime*fs):end ), fs); % computed without the transient response of the fast weight
+
+            LAeq = LAeq_all(chan);
             if outchans~=1
                 whichEar = 'left ear';
             else
@@ -830,7 +824,7 @@ if show
             end
         end
          
-        titleString = sprintf('%s signal, $L_{\\textrm{A,eq,%s}} =$ %.3g (dB SPL)', chans(chan), whichEar, LAeq);
+        titleString = sprintf('%s signal, $L_{\\textrm{Aeq,%s}} =$ %.3g (dB SPL)', chans(chan), whichEar, LAeq);
 
         title(titleString, 'Interpreter','Latex' );
 
@@ -854,8 +848,8 @@ if show
         ax2.GridAlpha = 0.075;
         ax2.GridLineStyle = '--';
         ax2.GridLineWidth = 0.25;
-        ax2.FontName = 'Arial';
-        ax2.FontSize = 10;
+        ax2.FontName = 'Times';
+        ax2.FontSize = 11;
         legend('Location', 'eastoutside', 'FontSize', 8);
         set(gcf,'color','w');
 

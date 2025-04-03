@@ -142,7 +142,7 @@ function OUT = Loudness_ECMA418_2(insig, fs, fieldtype, time_skip, show)
 % Institution: University of Salford
 %
 % Date created: 22/09/2023
-% Date last modified: 09/01/2025
+% Date last modified: 02/04/2025
 % MATLAB version: 2023b
 %
 % Copyright statement: This file and code is part of work undertaken within
@@ -187,9 +187,9 @@ elseif  size(insig, 2) > 2  % insig is [1xN] or [2xN]
     fprintf('\nWarning: Input signal is not [Nx1] or [Nx2] and was transposed.\n');
 end
 
-% Check the length of the input data (must be longer than 304 ms)
+% Check the length of the input data (must be at least 304 ms)
 if size(insig, 1) <  t_threshold*fs
-    error('Error: Input signal is too short along the specified axis to calculate loudness (must be longer than 304 ms)')
+    error('Error: Input signal is too short along the specified axis to calculate loudness (must be at least 304 ms)')
 end
 
 % Check the channel number of the input data
@@ -378,11 +378,10 @@ if show
     % colormap
     cmap_viridis = load('cmap_viridis.txt');
 
-    %%% sound level meter parameters
-    weightFreq = 'A'; % A-frequency weighting
-    weightTime = 'f'; % Time weighting
-    transientTime = 0.6; % fast weighting has a transient response of ~0.6 s. It needs to be removed from the beginning of the SPL curve  
-    dBFS = 94;
+    % generate A-weighting filter for LAeq calculation
+    [b, a] = Gen_weighting_filters(fs, 'A');
+    insig_A = filter(b, a, insig);  % filter signal
+    LAeq_all = 20*log10(rms(insig_A(idx_insig:end, :))./2e-5);  % calculate LAeq
 
     for chan = outchans:-1:1
         % Plot results
@@ -403,21 +402,17 @@ if show
         ax1.YScale = 'log';
         ax1.YLabel.String = 'Frequency (Hz)';
         ax1.XLabel.String = 'Time (s)';
-        ax1.FontName =  'Arial';
-        ax1.FontSize = 10;
+        ax1.FontName =  'Times';
+        ax1.FontSize = 11;
         colormap(cmap_viridis);
         h = colorbar;
         set(get(h,'label'),'string', {'Specific Loudness,'; '(sone_{HMS}/Bark_{HMS})'});        
 
+        
         if chan == 3 % the binaural channel
 
-            for i=1:outchans-1
-                [LA(:,i), ~] = Do_SLM( insig(idx_insig:end, i) , fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-                LAeq2(i) = Get_Leq(LA( (transientTime*fs):end ,i), fs); % computed without the transient response of the fast weight
-            end
-
-             % take the higher channel level as representative (PD ISO/TS 12913-3:2019 Annex D)
-            [LAeq, LR] = max(LAeq2);
+            % take the higher channel level as representative (PD ISO/TS 12913-3:2019 Annex D)
+            [LAeq, LR] = max(LAeq_all);
 
             % if branch to identify which channel is higher
             if LR == 1
@@ -427,13 +422,13 @@ if show
             end  % end of if branch
 
         elseif chan == 2 % Stereo right
-            [LA, ~] = Do_SLM(insig(idx_insig:end, chan), fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-            LAeq = Get_Leq(LA( (transientTime*fs):end ), fs); % computed without the transient response of the fast weight
+
+            LAeq = LAeq_all(chan);
             whichEar = 'right ear';
 
         elseif chan == 1 % Stereo left or mono
-            [LA, ~] = Do_SLM(insig(idx_insig:end, chan), fs, weightFreq, weightTime, dBFS); % get A-weighted SPL
-            LAeq = Get_Leq(LA( (transientTime*fs):end ), fs); % computed without the transient response of the fast weight
+
+            LAeq = LAeq_all(chan);
             if outchans~=1
                 whichEar = 'left ear';
             else
@@ -441,7 +436,7 @@ if show
             end
         end
          
-        titleString = sprintf('%s signal, $L_{\\textrm{A,eq,%s}} =$ %.3g (dB SPL)', chans(chan), whichEar, LAeq);
+        titleString = sprintf('%s signal, $L_{\\textrm{Aeq,%s}} =$ %.3g (dB SPL)', chans(chan), whichEar, LAeq);
 
         title(titleString, 'Interpreter','Latex' );
 
@@ -465,8 +460,8 @@ if show
         ax2.GridAlpha = 0.075;
         ax2.GridLineStyle = '--';
         ax2.GridLineWidth = 0.25;
-        ax2.FontName = 'Arial';
-        ax2.FontSize = 12;
+        ax2.FontName = 'Times';
+        ax2.FontSize = 11;
         legend('Location', 'eastoutside', 'FontSize', 8);
         set(gcf,'color','w');
         clear LA; 
