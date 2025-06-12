@@ -32,21 +32,35 @@ function OUT = FluctuationStrength_Osses2016(insig,fs,method,time_skip,show,stru
 %
 %   struct_opt: struct where some specific model parameters can
 %   be set to a different value. If not specified, the default values are used. 
-%   Currently, the only parameter that can be changed is the a0
-%   (outer and middle ear transmission factor). For that, the struct <struct_opt> needs to 
-%   contain the parameter <a0_type>, meaning <struct_opt.a0_type = 'string_input'> 
-%   should be defined with one of the following <string_input>:
+%   The struct <struct_opt> contains the field <a0_type>, meaning
+%   <struct_opt.a0_type = 'string_input'> should be defined with one of the following <string_input>:
 %
 %  string_input = 'fluctuationstrength_osses2016' :  A simplified a0 factor can be adopted if 
 %  <a0_type> is set to this option, where the ear canal resonance of Fastl's a0 curve is removed. 
 %  In other words, the a0 curve is roughly approximated as a low-pass filter. Although not 
 %  explicitly stated by Osses et al. 2016 (doi: 10.1121/2.0000410), the simplified a0 transmission 
 %  curve leads to very similar results during the validation of their fluctuation strength algorithm.
-%  This is the default which is used if no input is given at all, as defined by the model's author
+%  This is also the default used if no input is given, as defined by the model's author
 %  
-%  string_input = 'fastl2007' : uses the transmission factor for free-field,
-%  according to Fig 8.18 (page 226) in Fastl & Zwicker Book, Psychoacoustics: facts and
-%  models 3rd edition (doi: 10.1007/978-3-540-68888-4)
+%  string_input = 'fastl2007ff' : uses the outer ear transmission factor for
+%  free-field (frontal incidence), according to Fig 8.18 (page 226) in
+%  Fastl & Zwicker Book, Psychoacoustics: facts and models 3rd edition
+%  (doi: 10.1007/978-3-540-68888-4)
+%
+%  string_input = 'fastl2007df' : uses the outer ear transmission factor for
+%  diffuse field according to the same literature source as 'fastl2007ff'.
+%
+%   Another available <struct_opt> field is <ecmaEar>, which indicates
+%   whether the ECMA-418-2:2024 outer and middle ear filter should be
+%   applied, instead of the a0 options. <struct_opt.ecmaEar> should be
+%   defined with one of the following options:
+% 
+%  If set to 'ecmaff' (keyword string), the ECMA-418-2 free-field 
+%  filter will be applied, while 'ecmadf' (keyword string) will apply the
+%  diffuse field filter. If set to false or 0 (Boolean, the default),
+%  the ECMA-418-2 filter will not be applied and the ear transmission is
+%  applied via <a0_type> (otherwise, <ecmaEar> will override the option
+%  passed to <a0_type>).
 %
 % OUTPUT:
 %   OUT : struct containing the following fields
@@ -88,6 +102,10 @@ function OUT = FluctuationStrength_Osses2016(insig,fs,method,time_skip,show,stru
 %            factor were moved to the <utilities> folder of the toolbox as
 %            standalone functions
 % Author: Gil Felix Greco, Braunschweig 16.02.2025 - introduced get_statistics function
+% Modified: Mike Lotinga May 2025 - amended struct_opt inputs to enable
+% free-field or diffuse-field outer ear attenuation a0,
+% added option to apply ECMA-418-2 outer and middle ear filter instead,
+% and incorporated backwards-compatible curve option from original SQAT
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 if nargin == 0
     help FluctuationStrength_Osses2016;
@@ -111,15 +129,25 @@ if size(insig,2)~=1 % if the insig is not a [Nx1] array
     insig=insig';   % correct the dimension of the insig
 end
 
-%% Resampling audio to 44.1 kHz or 48 kHz
-if ~(fs == 44100 || fs == 48000)
-    gcd_fs = gcd(44100,fs); % greatest common denominator
-    insig = resample(insig,44100/gcd_fs,fs/gcd_fs);
-    fs = 44100;
-end
-
 if ~isfield(struct_opt,'a0_type')
     struct_opt.a0_type = 'fluctuationstrength_osses2016'; % this is the default of this model
+end
+
+if ~isfield(struct_opt,'ecmaEar')
+    struct_opt.ecmaEar = false;
+end
+
+%% Resampling audio to 44.1 kHz or 48 kHz
+if ~(fs == 44100 || fs == 48000)
+    if fs < 44100 && ecmaEar == false
+        gcd_fs = gcd(44100,fs); % greatest common denominator
+        insig = resample(insig,44100/gcd_fs,fs/gcd_fs);
+        fs = 44100;
+    else
+        gcd_fs = gcd(48e3,fs); % greatest common denominator
+        insig = resample(insig,48e3/gcd_fs,fs/gcd_fs);
+        fs = 48e3;
+    end
 end
 
 %% Checking which method
@@ -141,10 +169,8 @@ end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
             
-model_par = il_Get_fluctuation_strength_params(N,fs);
+model_par = il_Get_fluctuation_strength_params(N,fs,struct_opt);
 model_par.debug = 'none';
-
-% model_par = ef(model_par,'window_type','cosine');
 
 t_b = ( 1:length(insig) )/fs;
 
@@ -155,6 +181,14 @@ nFrames = size(insig,2);
 fluct   = zeros(1,nFrames); % Memory allocation
 
 %% ei = peripheral_stage(insig,fs,N);
+if strcmp(struct_opt.ecmaEar, 'ecmaff')
+    signalInit = shmOutMidEarFilter(insig, 'free-frontal');
+elseif strcmp(struct_opt.ecmaEar, 'ecmadf')
+    signalInit = shmOutMidEarFilter(insig, 'diffuse');
+else
+    signalInit = insig;
+end
+
 % 1. Cosine window:
 
 window = ones(N,1);
@@ -164,7 +198,7 @@ window = il_Do_cos_ramp(window,fs,attackrelease,attackrelease);
 
 for iFrame = 1:nFrames
     
-    signal = insig(:,iFrame);
+    signal = signalInit(:,iFrame);
     t(iFrame,1) = t_b(1,iFrame);
     
     % Apply window to frame
@@ -174,8 +208,10 @@ for iFrame = 1:nFrames
     % 2.1 Peripheral hearing system (transmission factor a0)
     %     (see 'model_par.a0_in_time' == 1, in _debug version):
     %
-    % 4096th order FIR filter:
-    signal = il_PeripheralHearingSystem_t(signal,fs,struct_opt); 
+    if struct_opt.ecmaEar == false
+        % 4096th order FIR filter:
+        signal = il_PeripheralHearingSystem_t(signal,fs,struct_opt);
+    end
     
     % 2.2 Excitation patterns
     %     (see model_par.filterbank == 'terhardt', in _debug version):
@@ -183,14 +219,16 @@ for iFrame = 1:nFrames
     dBFS = 94; % corresponds to 1 Pa (new default in SQAT)
     % dBFS = 100; % unit amplitude corresponds to 100 dB (AMT Toolbox 
                   % convention, default by the original authors)
-    ei   = TerhardtExcitationPatterns_v3(signal,fs,dBFS);
+
+    [ei,~,~] = TerhardtExcitationPatterns_v3(signal,fs,dBFS);
+    
     dz   = 0.5; % Barks, frequency step
     z    = 0.5:dz:23.5; % Bark
     fc   = bark2hz(z);
     flow = bark2hz(z-.5); flow(1) = 0.01;
     fup  = bark2hz(z+.5);
     BWHz = fup - flow;
-        
+
     %% 3. Modulation depth (estimation)
     [mdept,hBPi] = il_modulation_depths(ei,model_par.Hweight);
     
@@ -413,7 +451,7 @@ end
 mdept = md;
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function params = il_Get_fluctuation_strength_params(N,fs)
+function params = il_Get_fluctuation_strength_params(N,fs,struct_opt)
 % function params = il_Get_fluctuation_strength_params(N,fs)
 
 params         = struct;
@@ -425,19 +463,31 @@ params.debug   = 'none';
 % dataset = 0; % 0 = Approved version
 params.window_type = 'cosine';
 params.filterbank = 'terhardt'; 
-params.p_g     = 1; 
-params.p_m     = 1.7;  
-params.p_k     = 1.7; % warning('Temporal value') 
 params.a0_in_time = 1;
 params.a0_in_freq = ~params.a0_in_time;
 
-params.cal     = 0.4980; % this value is twice 0.2490 on 15/06/2016
+if struct_opt.ecmaEar ~= false
+    params.cal = 0.4980;%0.4980/1.088354161487663/0.849493902281961;
+    params.p_g     = 1; 
+    params.p_m     = 1.7;  
+    params.p_k     = 1.7; % warning('Temporal value')
+
+elseif strcmp(struct_opt.a0_type, 'fluctuationstrength_osses2016')
+    params.cal = 0.4980; % this value is twice 0.2490 on 15/06/2016
+    params.p_g     = 1; 
+    params.p_m     = 1.7;  
+    params.p_k     = 1.7; % warning('Temporal value')
+else
+    params.cal = 0.4980/1.088354161487663; % 
+    params.p_g     = 1; 
+    params.p_m     = 1.7;  
+    params.p_k     = 1.7; % warning('Temporal value') 
+end
 params.bIdle   = 1; % v5
 %%%        
 
 params.Hweight = Get_Hweight_fluctuation(fs);
-params.Hweight = Get_Hweight_fluctuation(fs);
-params.gzi     = il_Get_gzi_fluctuation(params.Chno);
+params.gzi     = il_Get_gzi_fluctuation(params.Chno, struct_opt);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function outsig = il_Do_cos_ramp(insig,fs,attack_ms,release_ms)
@@ -469,8 +519,12 @@ K = 2^12; % FIR filter order
 switch struct_opt.a0_type
     case 'fluctuationstrength_osses2016'
         B = calculate_a0(fs,K,'fluctuationstrength_osses2016');
-    case 'fastl2007'
-        B = calculate_a0(fs,K,'fastl2007');
+    case 'fastl2007ff'
+        B = calculate_a0(fs,K,'fastl2007ff');
+    case 'fastl2007df'
+        B = calculate_a0(fs,K,'fastl2007df');
+    case 'sqat1'
+        B = calculate_a0(fs,K,'sqat1');
     otherwise
         % Choosing the default:
         B = calculate_a0(fs,K,'fluctuationstrength_osses2016');
@@ -480,16 +534,26 @@ outsig = filter(B,1,[insig zeros(1,K/2)]);
 outsig = outsig(K/2+1:end);
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function gzi = il_Get_gzi_fluctuation(Chno)
+function gzi = il_Get_gzi_fluctuation(Chno, struct_opt)
 % function gzi = il_Get_gzi_fluctuation(Chno)
 %
 % Returns gzi parameters using the specified number of channels.
 
 Chstep = 0.5;
-    
-% Hz:   100 250   519   717 926 1084 1255 1465 1571   1972 2730 4189   15550
-g0 = [0,  1,  2.5,  4.9,6.5,  8,   9,  10,  11,  11.5,  13,  15,  17.5,   24;
-      1,  1,  1  ,  1  ,1  ,  1,   1,   1,   1,   1  ,   1, 0.9,   0.7, 0.5];
+
+% if struct_opt.ecmaEar ~= false
+% % Hz:   100 250   519   717 926 1084 1255 1465 1571   1972 2730 4189   15550
+%     g0 = [0,  1,  2.5,  4.9,6.5,  8,   9,  10,  11,  11.5,  13,  15,  17.5,   24;
+%           1,  1,  1  ,  1  ,1  ,  1,   1,   1,   1,   1  ,   1, 0.9,   0.7, 0.5];
+% 
+% elseif strcmp(struct_opt.a0_type, 'fluctuationstrength_osses2016')
+    g0 = [0,  1,  2.5,  4.9,6.5,  8,   9,  10,  11,  11.5,  13,  15,  17.5,   24;
+          1,  1,  1  ,  1  ,1  ,  1,   1,   1,   1,   1  ,   1, 0.9,   0.7, 0.5];
+
+% else
+    g0 = [0,  1,  2.5,  4.9,6.5,  8,   9,  10,  11,  11.5,  13,  15,  17.5,   24;
+          1,  1,  1  ,  1  ,1  ,  1,   1,   1,   1,   1  ,   1, 0.9,   0.7, 0.5];
+% end
 g0 = transpose(g0);
 
 gzi = interp1(g0(:,1),g0(:,2),(1:Chno)*Chstep);

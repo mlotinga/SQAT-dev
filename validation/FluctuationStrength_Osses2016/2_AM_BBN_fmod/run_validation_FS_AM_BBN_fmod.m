@@ -22,7 +22,7 @@
 %
 % Author: Gil Felix Greco, Braunschweig, 02/03/2020 (updated in 13.03.2023)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-clc; clear all; close all;
+% clc; clear all; close all;
 
 save_figs=0; %% save figs flag
 
@@ -57,7 +57,7 @@ for i=1:size(fmod,2)
     SPL(i) = 20.*log10(rms(insig)/2e-5); % verify final SPL of the signal
     
     res{i} = FluctuationStrength_Osses2016(insig,fs,...  % input signal and sampling freq.
-                                                  1,...  % method, stationary analysis =0 - window size=length(insig), time_varying analysis - window size=2s
+                                                  1,...  % method, stationary analysis = 0 - window size=length(insig), time_varying analysis - window size=2s
                                                   0,...  % time_skip, in seconds for statistical calculations
                                                   0);    % show results, 'false' (disable, default value) or 'true' (enable)
                                                    

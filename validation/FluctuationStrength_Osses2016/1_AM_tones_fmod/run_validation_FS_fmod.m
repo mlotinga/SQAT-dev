@@ -21,7 +21,7 @@
 %
 % Author: Gil Felix Greco, Braunschweig, 02/03/2020 (updated in 13.03.2023)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-clc; clear all; close all;
+% clc; clear all; close all;
 
 save_figs = 0; %% save figs flag
 
@@ -59,7 +59,7 @@ for i=1:size(ref,2)
                                                        0,...  % method, stationary analysis =0 - window size=length(insig), time_varying analysis - window size=2s
                                                        0,...  % time_skip, in seconds for statistical calculations
                                                        0);    % show results, 'false' (disable, default value) or 'true' (enable)
-    
+                                                       
     results(i)=res{1,i}.FSmean; % store mean FS value in vector results[nfmod,nFc] 
     
     j=j+1;

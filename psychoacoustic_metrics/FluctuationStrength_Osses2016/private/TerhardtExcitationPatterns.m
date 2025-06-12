@@ -1,5 +1,5 @@
-function [ei,ei_f,freq] = TerhardtExcitationPatterns_v3(insig,fs,dBFS)
-% function [ei,ei_f,freq] = TerhardtExcitationPatterns_v3(insig,fs,dBFS)
+function [ei,ei_f,freq] = TerhardtExcitationPatterns(insig,fs,dBFS)
+% function [ei,ei_f,freq] = TerhardtExcitationPatterns(insig,fs,dBFS)
 %
 % Author: Alejandro Osses, extracted from FluctuationStrength_Osses2016.m on 12/05/2023
 % Modified: Mike Lotinga, May 2025 (parallelised code to omit loop over
